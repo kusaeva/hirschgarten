@@ -39,7 +39,7 @@ suspend fun runWithScriptPath(
     GeneralCommandLine()
       .withExePath(scriptPath.toString())
       // don't inherit IntelliJ's environment variables as the script should be self-contained
-      .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.NONE)
+      .withParentEnvironmentType(GeneralCommandLine.ParentEnvironmentType.CONSOLE)
       .withEnvironment(env)
   if (testFilter != null) {
     commandLine.environment[BAZEL_TEST_FILTER_ENV] = testFilter

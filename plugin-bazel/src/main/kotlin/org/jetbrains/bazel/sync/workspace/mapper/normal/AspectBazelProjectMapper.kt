@@ -127,11 +127,11 @@ class AspectBazelProjectMapper(
       }
     val interfacesAndBinariesFromTargetsToImport =
       measure("Collect interfaces and classes from targets to import") {
-        collectInterfacesAndClasses(targetsToImport)
+        collectInterfacesAndClasses(targetsToImport, allTargets)
       }
     val outputJarsLibraries =
       measure("Create output jars libraries") {
-        calculateOutputJarsLibraries(targetsToImport)
+        calculateOutputJarsLibraries(targetsToImport, allTargets)
       }
     val annotationProcessorLibraries =
       measure("Create AP libraries") {
@@ -161,7 +161,7 @@ class AspectBazelProjectMapper(
       }
     val librariesFromDepsAndTargets =
       measure("Libraries from targets and deps") {
-        createLibraries(targetsAsLibraries) +
+        createLibraries(targetsAsLibraries, allTargets) +
           librariesFromDeps.values
             .flatten()
             .distinct()
@@ -174,6 +174,7 @@ class AspectBazelProjectMapper(
           librariesFromDeps,
           librariesFromDepsAndTargets,
           interfacesAndBinariesFromTargetsToImport,
+          allTargets,
         )
       }
     val librariesToImport =
@@ -244,6 +245,7 @@ class AspectBazelProjectMapper(
 
   private fun calculateOutputJarsLibraries(
     targetsToImport: Sequence<TargetInfo>,
+    allTargets: Map<Label, TargetInfo>,
   ): Map<Label, List<Library>> =
     targetsToImport
       .filter { shouldCreateOutputJarsLibrary(it) }
@@ -253,6 +255,7 @@ class AspectBazelProjectMapper(
           target,
           onlyOutputJars = true,
           containsInternalJars = true,
+          allTargets,
         )?.let { library ->
           target.label() to listOf(library)
         }
@@ -444,9 +447,10 @@ class AspectBazelProjectMapper(
     libraryDependencies: Map<Label, List<Library>>,
     librariesToImport: Map<Label, Library>,
     interfacesAndBinariesFromTargetsToImport: Map<Label, Set<Path>>,
+    allTargets: Map<Label, TargetInfo>,
   ): Map<Label, List<Library>> {
     val targetsToJdepsJars =
-      getAllJdepsDependencies(targetsToImport, libraryDependencies, librariesToImport)
+      getAllJdepsDependencies(targetsToImport, libraryDependencies, librariesToImport, allTargets)
     val libraryNameToLibraryValueMap = HashMap<Label, Library>()
     return targetsToJdepsJars.mapValues { target ->
       val interfacesAndBinariesFromTarget =
@@ -478,6 +482,7 @@ class AspectBazelProjectMapper(
     targetsToImport: Map<Label, TargetInfo>,
     libraryDependencies: Map<Label, List<Library>>,
     librariesToImport: Map<Label, Library>,
+    allTargets: Map<Label, TargetInfo>,
   ): Map<Label, Set<Path>> {
     val jdepsJars =
       withContext(Dispatchers.IO) {
@@ -509,6 +514,7 @@ class AspectBazelProjectMapper(
                 librariesToImport,
                 outputJarsFromTransitiveDepsCache,
                 allJdepsJars,
+                allTargets,
               )
             targetLabel to jarsFromJdeps - transitiveJdepsJars
           }
@@ -525,10 +531,11 @@ class AspectBazelProjectMapper(
     librariesToImport: Map<Label, Library>,
     outputJarsFromTransitiveDepsCache: ConcurrentHashMap<Label, Set<Path>>,
     allJdepsJars: Set<Path>,
+    allTargets: Map<Label, TargetInfo>,
   ): Set<Path> =
     outputJarsFromTransitiveDepsCache.getOrPut(targetOrLibrary) {
       val jarsFromTargets =
-        targetsToImport[targetOrLibrary]?.let { getTargetOutputJarsSet(it) + getTargetInterfaceJarsSet(it) }.orEmpty()
+        targetsToImport[targetOrLibrary]?.let { getTargetOutputJarsSet(it, allTargets) + getTargetInterfaceJarsSet(it) }.orEmpty()
       val jarsFromLibraries =
         librariesToImport[targetOrLibrary]?.let { it.outputs + it.interfaceJars }.orEmpty()
       val outputJars =
@@ -551,6 +558,7 @@ class AspectBazelProjectMapper(
           librariesToImport,
           outputJarsFromTransitiveDepsCache,
           allJdepsJars,
+          allTargets,
         )
       }
       outputJars
@@ -630,7 +638,7 @@ class AspectBazelProjectMapper(
       }
   }
 
-  private suspend fun createLibraries(targets: Map<Label, TargetInfo>): Map<Label, Library> =
+  private suspend fun createLibraries(targets: Map<Label, TargetInfo>, allTargets: Map<Label, TargetInfo>): Map<Label, Library> =
     withContext(Dispatchers.Default) {
       targets
         .map { (targetId, targetInfo) ->
@@ -640,6 +648,7 @@ class AspectBazelProjectMapper(
               targetInfo = targetInfo,
               onlyOutputJars = false,
               containsInternalJars = targetInfo.containsAnyInternalJars(),
+              allTargets = allTargets,
             )?.let { library ->
               targetId to library
             }
@@ -658,8 +667,9 @@ class AspectBazelProjectMapper(
     targetInfo: TargetInfo,
     onlyOutputJars: Boolean,
     containsInternalJars: Boolean,
+    allTargets: Map<Label, TargetInfo>,
   ): Library? {
-    val outputs = getTargetOutputJarPaths(targetInfo) + getIntellijPluginJars(targetInfo)
+    val outputs = getTargetOutputJarPaths(targetInfo, allTargets) + getIntellijPluginJars(targetInfo)
     val sources = getSourceJarPaths(targetInfo)
     val interfaceJars = getTargetInterfaceJarsSet(targetInfo).toSet()
     val dependencies: List<BspTargetInfo.Dependency> = if (!onlyOutputJars) targetInfo.dependenciesList else emptyList()
@@ -704,8 +714,8 @@ class AspectBazelProjectMapper(
 
   private fun List<FileLocation>.resolvePaths() = map { bazelPathsResolver.resolve(it) }.toSet()
 
-  private fun getTargetOutputJarPaths(targetInfo: TargetInfo) =
-    getTargetOutputJarsList(targetInfo)
+  private fun getTargetOutputJarPaths(targetInfo: TargetInfo, allTargets: Map<Label, TargetInfo>) =
+    getTargetOutputJarsList(targetInfo, allTargets)
       .toSet()
 
   private fun getIntellijPluginJars(targetInfo: TargetInfo): Set<Path> {
@@ -722,12 +732,20 @@ class AspectBazelProjectMapper(
       .flatMap { it.sourceJarsList }
       .resolvePaths()
 
-  private fun getTargetOutputJarsSet(targetInfo: TargetInfo) = getTargetOutputJarsList(targetInfo).toSet()
+  private fun getTargetOutputJarsSet(targetInfo: TargetInfo, allTargets: Map<Label, TargetInfo>) =
+    getTargetOutputJarsList(targetInfo, allTargets).toSet()
 
-  private fun getTargetOutputJarsList(targetInfo: TargetInfo) =
-    targetInfo.jvmTargetInfo.jarsList
+  private fun getTargetOutputJarsList(targetInfo: TargetInfo, allTargets: Map<Label, TargetInfo>): List<Path> {
+    val directJars = targetInfo.jvmTargetInfo.jarsList
       .flatMap { it.binaryJarsList }
       .map { bazelPathsResolver.resolve(it) }
+
+    return if (targetInfo.kind == "scala_proto_library") {
+      directJars + getTransitiveProtoScalapbJars(targetInfo, allTargets)
+    } else {
+      directJars
+    }
+  }
 
   private fun getTargetInterfaceJarsSet(targetInfo: TargetInfo) = getTargetInterfaceJarsList(targetInfo).toSet()
 
@@ -736,11 +754,71 @@ class AspectBazelProjectMapper(
       .flatMap { it.interfaceJarsList }
       .map { bazelPathsResolver.resolve(it) }
 
-  private fun collectInterfacesAndClasses(targets: Sequence<TargetInfo>) =
+  /**
+   * Finds scalapb JAR files for transitive proto_library dependencies of a scala_proto_library.
+   * This ensures that imports from transitive proto dependencies are resolved correctly.
+   */
+  private fun getTransitiveProtoScalapbJars(scalaProtoTarget: TargetInfo, allTargets: Map<Label, TargetInfo>): List<Path> {
+    val transitiveProtoTargets = findTransitiveProtoLibraries(scalaProtoTarget, allTargets)
+    return transitiveProtoTargets.mapNotNull { protoTarget ->
+      findScalapbJarForProtoTarget(protoTarget)
+    }
+  }
+
+  /**
+   * Finds all transitive proto_library dependencies of a scala_proto_library target.
+   * Excludes direct scala_proto_library dependencies to avoid duplicating JARs that are already
+   * included by the plugin's standard processing.
+   */
+  private fun findTransitiveProtoLibraries(target: TargetInfo, allTargets: Map<Label, TargetInfo>): Set<TargetInfo> {
+    val visitedTargets = mutableSetOf<Label>()
+    val protoTargets = mutableSetOf<TargetInfo>()
+
+    fun collectTransitiveProtoTargets(currentTarget: TargetInfo) {
+      val currentLabel = currentTarget.label()
+      if (currentLabel in visitedTargets) return
+      visitedTargets.add(currentLabel)
+
+      currentTarget.dependenciesList.forEach { dep ->
+        val depLabel = Label.parse(dep.id)
+        allTargets[depLabel]?.let { depTarget ->
+          protoTargets.add(depTarget)
+          collectTransitiveProtoTargets(depTarget)
+        }
+      }
+    }
+
+    target.dependenciesList.forEach { dep ->
+      val depLabel = Label.parse(dep.id)
+      allTargets[depLabel]?.let { depTarget ->
+        if (depTarget.kind == "proto_library") {
+          collectTransitiveProtoTargets(depTarget)
+        }
+      }
+    }
+
+    return protoTargets
+  }
+
+  private fun findScalapbJarForProtoTarget(protoTarget: TargetInfo): Path? {
+    val protoLabel = protoTarget.label()
+    val expectedJarName = "${protoLabel.targetName}_scalapb.jar"
+
+    val bazelBinPath =
+      bazelPathsResolver
+        .workspaceRoot()
+        .resolve("bazel-bin")
+        .resolve(protoLabel.packagePath.toString())
+        .resolve(expectedJarName)
+
+    return if (bazelBinPath.exists()) bazelBinPath else null
+  }
+
+  private fun collectInterfacesAndClasses(targets: Sequence<TargetInfo>, allTargets: Map<Label, TargetInfo>) =
     targets
       .associate { target ->
         target.label() to
-          (getTargetInterfaceJarsList(target) + getTargetOutputJarsList(target))
+          (getTargetInterfaceJarsList(target) + getTargetOutputJarsList(target, allTargets))
             .toSet()
       }
 

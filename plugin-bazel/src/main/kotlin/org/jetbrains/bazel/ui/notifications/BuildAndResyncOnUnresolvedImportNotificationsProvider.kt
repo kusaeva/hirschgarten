@@ -68,6 +68,7 @@ class BuildAndResyncOnUnresolvedImportNotificationsProvider :
   private inner class BuildAndResyncOnUnresolvedImportEditorPanel(project: Project, fileEditor: FileEditor) :
     EditorNotificationPanel(fileEditor, Status.Warning) {
     init {
+      //todo
       text = BazelPluginBundle.message("notification.unresolved.imports")
 
       createActionLabel(BazelPluginBundle.message("build.and.resync.action.text")) {

@@ -52,7 +52,7 @@ class TestTargetAction(
 
     // Handle JvmTestState
     (configuration as BazelRunConfiguration).handler?.apply {
-      (state as? org.jethandlibrains.bazel.run.state.HasProgramArguments)?.let {
+      (state as? org.jetbrains.bazel.run.state.HasProgramArguments)?.let {
         if (it.programArguments == null) {
           it.programArguments = transformProgramArguments(testExecutableArguments)
         }

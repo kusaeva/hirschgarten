@@ -896,6 +896,11 @@
       id="Bazel.BuildAndResyncAction"
     />
     <action
+      class="org.jetbrains.bazel.action.registered.ForceReindexAction"
+      icon="/icons/bazelReload.svg"
+      id="Bazel.ForceReindexAction"
+    />
+    <action
       class="org.jetbrains.bazel.action.registered.NewBazelPackageAction"
       id="Bazel.NewBazelPackageAction"
     >
@@ -909,6 +914,7 @@
     <group id="Bazel.ActionsToolbar">
       <reference id="Bazel.ResyncAction" />
       <reference id="Bazel.BuildAndResyncAction" />
+      <reference id="Bazel.ForceReindexAction" />
     </group>
 
     <action

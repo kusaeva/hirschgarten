@@ -81,3 +81,7 @@ common --action_env=ANDROID_SDK_HOME=
 
 # Required to use the prebuilt protoc
 common --incompatible_enable_proto_toolchain_resolution
+
+build --experimental_downloader_config=bazel_downloader.cfg
+sync --experimental_downloader_config=bazel_downloader.cfg
+query --experimental_downloader_config=bazel_downloader.cfg
